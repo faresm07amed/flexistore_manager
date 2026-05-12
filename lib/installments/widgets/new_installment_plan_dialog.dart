@@ -41,6 +41,16 @@ class _NewInstallmentPlanDialogState extends State<NewInstallmentPlanDialog> {
       setState(() => _error = 'Please select a client.');
       return;
     }
+
+    // Check if client has active installments
+    final hasActivePlan = AppDataStore.instance.installments.any(
+      (plan) => plan.clientId == _selectedClient!.id && plan.status == 'active'
+    );
+    if (hasActivePlan) {
+      setState(() => _error = 'Customer already has an active installment plan.');
+      return;
+    }
+
     if (item.isEmpty) {
       setState(() => _error = 'Please enter the item name.');
       return;
@@ -62,10 +72,11 @@ class _NewInstallmentPlanDialogState extends State<NewInstallmentPlanDialog> {
       downPayment: down,
       months: _selectedMonths,
       interestRate: interest,
+      itemName: item,
     );
 
     if (success) {
-      Navigator.of(context).pop();
+      Navigator.of(context, rootNavigator: true).pop();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: const Color(0xFF10B981),
@@ -125,7 +136,7 @@ class _NewInstallmentPlanDialogState extends State<NewInstallmentPlanDialog> {
                   ]),
                   IconButton(
                     icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
                   ),
                 ],
               ),
@@ -257,7 +268,7 @@ class _NewInstallmentPlanDialogState extends State<NewInstallmentPlanDialog> {
               Row(children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.white,
                       side: const BorderSide(color: Color(0xFF334155)),

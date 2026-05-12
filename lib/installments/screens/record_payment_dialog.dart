@@ -116,7 +116,7 @@ class _RecordPaymentDialogState extends State<RecordPaymentDialog> {
             // ── Client & item info ─────────────────────────────────────────
             _infoRow('Client',    plan.clientName),
             const SizedBox(height: 8),
-            _infoRow('Item',      'Invoice #${plan.invoiceId}'),
+            _infoRow('Item',      plan.itemName ?? 'Invoice #${plan.invoiceId}'),
             const SizedBox(height: 8),
             _infoRow('Remaining', '\$${plan.remainingAmount.toStringAsFixed(2)}'),
             const SizedBox(height: 8),

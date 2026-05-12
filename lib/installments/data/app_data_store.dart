@@ -6,11 +6,12 @@ import '../../core/db_models.dart';
 /// DB-backed reactive data store — replaces the old MockDataStore.
 /// All reads/writes go through [NativeBridge] → C++ FFI → MySQL.
 class AppDataStore {
-  AppDataStore._();
+  AppDataStore._() {
+    applyMockData(); // Initialize mock data by default for UI testing
+  }
   static final AppDataStore instance = AppDataStore._();
 
-  final _bridge = NativeBridge();
-  bool _isMockMode = false;
+  bool _isMockMode = true;
   int _mockPlanId = 100;
 
   // ── Notifiers ──────────────────────────────────────────────────────────────
@@ -26,17 +27,17 @@ class AppDataStore {
   // ── Load / Refresh ─────────────────────────────────────────────────────────
   void refreshClients() {
     if (_isMockMode) return;
-    clientsNotifier.value = parseClients(_bridge.getAllClients());
+    throw UnimplementedError('Native FFI for getAllClients not implemented in this store');
   }
 
   void refreshProducts() {
     if (_isMockMode) return;
-    productsNotifier.value = parseProducts(_bridge.getAllProducts());
+    throw UnimplementedError('Native FFI for getAllProducts not implemented in this store');
   }
 
   void refreshInstallments() {
     if (_isMockMode) return;
-    installmentsNotifier.value = parseInstallments(_bridge.getAllInstallments());
+    throw UnimplementedError('Native FFI for getAllInstallments not implemented in this store');
   }
 
   /// Call once at app startup after initializeDatabase().
@@ -67,31 +68,31 @@ class AppDataStore {
     installmentsNotifier.value = [
       const DbInstallmentPlan(
         id: 1, clientId: 1, clientName: 'Sarah Smith', clientPhone: '+1 555-001',
-        invoiceId: 101, totalAmount: 1200, remainingAmount: 800, months: 6,
+        invoiceId: 101, itemName: 'iPhone 14 Pro', totalAmount: 1200, remainingAmount: 800, months: 6,
         monthlyInstallment: 200, status: 'active', createdAt: '2026-03-15',
         interestRate: 5.0,
       ),
       const DbInstallmentPlan(
         id: 2, clientId: 2, clientName: 'David Brown', clientPhone: '+1 555-002',
-        invoiceId: 102, totalAmount: 3200, remainingAmount: 1600, months: 8,
+        invoiceId: 102, itemName: 'MacBook Air M2', totalAmount: 3200, remainingAmount: 1600, months: 8,
         monthlyInstallment: 400, status: 'active', createdAt: '2026-01-10',
         interestRate: 8.5,
       ),
       const DbInstallmentPlan(
         id: 3, clientId: 3, clientName: 'Emma Wilson', clientPhone: '+1 555-003',
-        invoiceId: 103, totalAmount: 450, remainingAmount: 0, months: 3,
+        invoiceId: 103, itemName: 'iPad Pro', totalAmount: 450, remainingAmount: 0, months: 3,
         monthlyInstallment: 150, status: 'completed', createdAt: '2025-12-05',
         interestRate: 0.0,
       ),
       const DbInstallmentPlan(
         id: 4, clientId: 4, clientName: 'James Taylor', clientPhone: '+1 555-004',
-        invoiceId: 104, totalAmount: 900, remainingAmount: 900, months: 12,
+        invoiceId: 104, itemName: 'Samsung Galaxy S23', totalAmount: 900, remainingAmount: 900, months: 12,
         monthlyInstallment: 75, status: 'active', createdAt: '2026-04-20',
         interestRate: 10.0,
       ),
       const DbInstallmentPlan(
         id: 5, clientId: 5, clientName: 'Olivia Martin', clientPhone: '+1 555-005',
-        invoiceId: 105, totalAmount: 2400, remainingAmount: 2400, months: 24,
+        invoiceId: 105, itemName: '2x iPhone 14 Pro', totalAmount: 2400, remainingAmount: 2400, months: 24,
         monthlyInstallment: 100, status: 'overdue', createdAt: '2025-10-15',
         interestRate: 12.0,
       ),
@@ -106,9 +107,7 @@ class AppDataStore {
       clientsNotifier.value = [...clients, DbClient(id: newId, name: name, phone: phone, totalDebt: 0)];
       return 0;
     }
-    final result = _bridge.addClient(name, phone);
-    if (result == 0) refreshClients();
-    return result;
+    throw UnimplementedError('Native FFI for addClient not implemented in this store');
   }
 
   int deleteClient(int id) {
@@ -116,9 +115,7 @@ class AppDataStore {
       clientsNotifier.value = clients.where((c) => c.id != id).toList();
       return 0;
     }
-    final result = _bridge.deleteClient(id);
-    if (result == 0) refreshClients();
-    return result;
+    throw UnimplementedError('Native FFI for deleteClient not implemented in this store');
   }
 
   // ── POS / Sales ────────────────────────────────────────────────────────────
@@ -158,15 +155,7 @@ class AppDataStore {
       
       return 999; 
     }
-    final invoiceId = _bridge.createSale(
-      userId:      userId,
-      clientId:    clientId ?? 0,
-      itemsJson:   itemsJson,
-      paymentType: paymentMethod,
-      totalAmount: totalAmount,
-    );
-    if (invoiceId > 0) refreshProducts(); // stock changed
-    return invoiceId;
+    throw UnimplementedError('Native FFI for createSale not implemented in this store');
   }
 
   // ── Installments ───────────────────────────────────────────────────────────
@@ -177,6 +166,7 @@ class AppDataStore {
     required double downPayment,
     required int months,
     required double interestRate,
+    String? itemName,
   }) async {
     if (_isMockMode) {
       final client = clients.firstWhere((c) => c.id == clientId);
@@ -186,6 +176,7 @@ class AppDataStore {
         clientName: client.name,
         clientPhone: client.phone,
         invoiceId: invoiceId,
+        itemName: itemName ?? 'Invoice #$invoiceId', // Default for newly created plans
         totalAmount: totalAmount,
         remainingAmount: totalAmount - downPayment,
         months: months,
@@ -193,6 +184,7 @@ class AppDataStore {
         status: 'active',
         interestRate: interestRate,
         createdAt: DateTime.now().toString().split(' ')[0],
+        lastPaymentDate: null,
       );
       
       installmentsNotifier.value = [...installments, newPlan];
@@ -207,18 +199,7 @@ class AppDataStore {
       
       return true;
     }
-    final result = _bridge.createInstallmentPlan(
-      clientId:    clientId,
-      invoiceId:   invoiceId,
-      totalAmount: totalAmount,
-      months:      months,
-    );
-    if (result == 0) {
-      refreshInstallments();
-      refreshClients(); // total_debt updated
-      return true;
-    }
-    return false;
+    throw UnimplementedError('Native FFI for createInstallmentPlan not implemented in this store');
   }
 
   Future<bool> recordPayment({
@@ -239,6 +220,7 @@ class AppDataStore {
         clientName: plan.clientName,
         clientPhone: plan.clientPhone,
         invoiceId: plan.invoiceId,
+        itemName: plan.itemName,
         totalAmount: plan.totalAmount,
         remainingAmount: newRemaining,
         months: plan.months,
@@ -246,6 +228,7 @@ class AppDataStore {
         status: newRemaining <= 0 ? 'completed' : 'active',
         interestRate: plan.interestRate,
         createdAt: plan.createdAt,
+        lastPaymentDate: DateTime.now().toIso8601String(),
       );
       
       installmentsNotifier.value = List.from(installments)..[planIdx] = updatedPlan;
@@ -260,16 +243,6 @@ class AppDataStore {
       
       return true;
     }
-    final result = _bridge.recordInstallmentPayment(
-      installmentId: installmentId,
-      userId:        userId,
-      amount:        amount,
-    );
-    if (result == 0) {
-      refreshInstallments();
-      refreshClients(); // total_debt decremented
-      return true;
-    }
-    return false;
+    throw UnimplementedError('Native FFI for recordInstallmentPayment not implemented in this store');
   }
 }

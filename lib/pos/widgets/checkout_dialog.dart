@@ -1,477 +1,811 @@
-import 'dart:convert';
-import 'dart:ui';
 import 'package:flutter/material.dart';
-import '../data/cart_state.dart';
-import '../../installments/data/app_data_store.dart';
-import '../../core/db_models.dart';
 
-class CheckoutDialog extends StatefulWidget {
-  const CheckoutDialog({super.key});
+import '../../auth/data/session_ffi.dart';
+import '../../clients/data/clients_ffi.dart';
+import '../../clients/screens/clients_screen.dart';
+import '../../installments/data/installments_ffi.dart';
+import '../data/cart_controller.dart';
+import '../data/pos_checkout_service.dart';
+import 'invoice_preview_dialog.dart';
 
-  static Future<void> show(BuildContext context) {
-    return showDialog(
-      context: context,
-      barrierColor: Colors.black54,
-      builder: (_) => const CheckoutDialog(),
-    );
-  }
+// ── Design Tokens ────────────────────────────────────────────────────────────
+const _kSurface = Color(0xFF0F172A);
+const _kCard = Color(0xFF1E293B);
+const _kBorder = Color(0xFF334155);
+const _kAccent = Color(0xFF3B82F6);
+const _kGreen = Color(0xFF22C55E);
+const _kOrange = Color(0xFFF59E0B);
+const _kRed = Color(0xFFEF4444);
+const _kTextPrimary = Colors.white;
+const _kTextSecondary = Color(0xFF94A3B8);
 
-  @override
-  State<CheckoutDialog> createState() => _CheckoutDialogState();
+/// Shows the checkout dialog and returns `true` if sale completed.
+Future<bool> showCheckoutDialog(BuildContext context) async {
+  final result = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => const _CheckoutDialog(),
+  );
+  return result ?? false;
 }
 
-class _CheckoutDialogState extends State<CheckoutDialog> {
-  DbClient? _selectedClient;
-  late bool _isCash;
-  
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Checkout Dialog
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class _CheckoutDialog extends StatefulWidget {
+  const _CheckoutDialog();
+
+  @override
+  State<_CheckoutDialog> createState() => _CheckoutDialogState();
+}
+
+enum _PaymentType { cash, installment }
+
+class _CheckoutDialogState extends State<_CheckoutDialog> {
+  _PaymentType _paymentType = _PaymentType.cash;
+  bool _isProcessing = false;
+
+  // ── Installment-specific state ──
+  List<Client> _clients = [];
+  Client? _selectedClient;
+  int _selectedMonths = 3;
+  String _clientSearchQuery = '';
+  bool _isLoadingClients = true;
+
   @override
   void initState() {
     super.initState();
-    _isCash = CartState.instance.paymentMethod == 'cash';
-  }
-  final _monthsCtrl = TextEditingController(text: '12');
-  final _downCtrl   = TextEditingController(text: '0');
-  final _interestCtrl = TextEditingController(text: '0');
-  String? _error;
-
-  double get _subtotal => CartState.instance.cartTotal;
-  double get _total    => _subtotal * 1.10;
-  int    get _months   => int.tryParse(_monthsCtrl.text.trim()) ?? 1;
-  double get _down     => double.tryParse(_downCtrl.text.trim()) ?? 0;
-  double get _rate     => double.tryParse(_interestCtrl.text.trim()) ?? 0;
-  double get _monthly  {
-    if (_months <= 0) return _total - _down;
-    final principal = _total - _down;
-    final interest = principal * (_rate / 100);
-    return (principal + interest) / _months;
+    _loadClients();
   }
 
-  static const _monthOptions = [3, 6, 9, 12, 18, 24, 36];
+  void _loadClients() {
+    setState(() => _isLoadingClients = true);
+    final clients = PosCheckoutService.loadClients();
+    setState(() {
+      _clients = clients;
+      _isLoadingClients = false;
+    });
+  }
 
-  @override
-  void dispose() {
-    _monthsCtrl.dispose();
-    _downCtrl.dispose();
-    _interestCtrl.dispose();
-    super.dispose();
+  List<Client> get _filteredClients {
+    if (_clientSearchQuery.isEmpty) return _clients;
+    final q = _clientSearchQuery.toLowerCase();
+    return _clients.where((c) {
+      return c.name.toLowerCase().contains(q) ||
+          c.phone.toLowerCase().contains(q);
+    }).toList();
+  }
+
+  double get _monthlyPayment {
+    final total = CartController.instance.grandTotal;
+    return InstallmentsFFI.instance
+        .calculateMonthlyPayment(total, _selectedMonths);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Material(
-            color: Colors.transparent,
-            child: Container(
-              width: 480,
-              constraints: const BoxConstraints(maxHeight: 650),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0F172A).withOpacity(0.92),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.white.withOpacity(0.08)),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.4),
-                    blurRadius: 40,
-                    offset: const Offset(0, 16),
-                  ),
-                ],
-              ),
+    final ctrl = CartController.instance;
+
+    return Dialog(
+      backgroundColor: _kSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 680),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // ── Header ──
+            _buildHeader(),
+            const Divider(color: _kBorder, height: 1),
+
+            // ── Body ──
+            Flexible(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(28),
+                padding: const EdgeInsets.all(20),
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildHeader(),
-                    const SizedBox(height: 24),
-                    _buildClientSelector(),
+                    // Order Summary
+                    _buildOrderSummary(ctrl),
                     const SizedBox(height: 20),
-                    _buildPaymentToggle(),
-                    if (!_isCash) ...[
+
+                    // Payment Type Toggle
+                    _buildPaymentTypeToggle(),
+                    const SizedBox(height: 20),
+
+                    // Installment section (only when selected)
+                    if (_paymentType == _PaymentType.installment) ...[
+                      _buildInstallmentSection(),
                       const SizedBox(height: 20),
-                      _buildInstallmentInputs(),
                     ],
-                    if (_error != null) ...[
-                      const SizedBox(height: 12),
-                      Row(children: [
-                        const Icon(Icons.error_outline, color: Colors.redAccent, size: 16),
-                        const SizedBox(width: 6),
-                        Expanded(child: Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 12))),
-                      ]),
-                    ],
-                    const SizedBox(height: 24),
-                    _buildDivider(),
-                    const SizedBox(height: 20),
-                    _buildSummary(),
-                    const SizedBox(height: 28),
-                    _buildActions(),
                   ],
                 ),
               ),
             ),
-          ),
+
+            const Divider(color: _kBorder, height: 1),
+
+            // ── Footer Buttons ──
+            _buildFooter(),
+          ],
         ),
       ),
     );
   }
+
+  // ── Header ──────────────────────────────────────────────────────────────────
 
   Widget _buildHeader() {
-    return Row(children: [
-      Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: const Color(0xFF22C55E).withOpacity(0.12),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Icon(Icons.point_of_sale_rounded, color: Color(0xFF4ADE80), size: 24),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
+      child: Row(
+        children: [
+          const Icon(Icons.point_of_sale_rounded, color: _kAccent, size: 22),
+          const SizedBox(width: 10),
+          const Text(
+            'Complete Sale',
+            style: TextStyle(
+              color: _kTextPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const Spacer(),
+          IconButton(
+            icon: const Icon(Icons.close_rounded, color: _kTextSecondary),
+            onPressed: _isProcessing ? null : () => Navigator.pop(context, false),
+          ),
+        ],
       ),
-      const SizedBox(width: 14),
-      const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('Checkout', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
-        SizedBox(height: 2),
-        Text('Finalize the current sale', style: TextStyle(color: Colors.white38, fontSize: 13)),
-      ]),
-      const Spacer(),
-      InkWell(
-        onTap: () => Navigator.of(context).pop(),
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: const Icon(Icons.close, color: Colors.white38, size: 20),
-        ),
-      ),
-    ]);
-  }
-
-  Widget _buildClientSelector() {
-    return ValueListenableBuilder<List<DbClient>>(
-      valueListenable: AppDataStore.instance.clientsNotifier,
-      builder: (context, clients, _) {
-        final items = <DropdownMenuItem<DbClient?>>[
-          const DropdownMenuItem<DbClient?>(
-            value: null,
-            child: Row(children: [
-              Icon(Icons.person_outline, color: Colors.white38, size: 18),
-              const SizedBox(width: 10),
-              Text('Walking Customer', style: TextStyle(color: Colors.white, fontSize: 14)),
-            ]),
-          ),
-          ...clients.map((c) => DropdownMenuItem<DbClient?>(
-                value: c,
-                child: Row(children: [
-                  const Icon(Icons.person, color: Color(0xFF60A5FA), size: 18),
-                  const SizedBox(width: 10),
-                  Text('${c.name}  ·  ${c.phone}', style: const TextStyle(color: Colors.white, fontSize: 14)),
-                ]),
-              )),
-        ];
-
-        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Client', style: TextStyle(color: Colors.white54, fontSize: 13, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          Container(
-            height: 46,
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1E293B),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFF334155)),
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<DbClient?>(
-                value: _selectedClient,
-                isExpanded: true,
-                dropdownColor: const Color(0xFF1E293B),
-                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Colors.white38),
-                items: items,
-                onChanged: (v) => setState(() {
-                  _selectedClient = v;
-                  _error = null;
-                  if (v == null) _isCash = true;
-                }),
-              ),
-            ),
-          ),
-          if (_selectedClient == null && !_isCash)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text('Select a client to use installments.',
-                  style: TextStyle(color: Colors.amber.shade300, fontSize: 11)),
-            ),
-        ]);
-      },
     );
   }
 
-  Widget _buildPaymentToggle() {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('Payment Method', style: TextStyle(color: Colors.white54, fontSize: 13, fontWeight: FontWeight.w600)),
-      const SizedBox(height: 8),
-      Row(children: [
-        Expanded(child: _paymentOption(
-          label: 'Cash', icon: Icons.attach_money_rounded,
-          selected: _isCash, selectedColor: const Color(0xFF22C55E),
-          onTap: () => setState(() => _isCash = true),
-        )),
-        const SizedBox(width: 12),
-        Expanded(child: _paymentOption(
-          label: 'Installments', icon: Icons.calendar_month_rounded,
-          selected: !_isCash, selectedColor: const Color(0xFF3B82F6),
-          onTap: _selectedClient == null ? null : () => setState(() => _isCash = false),
-        )),
-      ]),
-    ]);
+  // ── Order Summary ───────────────────────────────────────────────────────────
+
+  Widget _buildOrderSummary(CartController ctrl) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _kCard,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _kBorder),
+      ),
+      child: Column(
+        children: [
+          _summaryRow('Products', '${ctrl.cartItems.length} items'),
+          const SizedBox(height: 6),
+          _summaryRow(
+            'Subtotal',
+            '\$${ctrl.subtotal.toStringAsFixed(2)}',
+          ),
+          if (ctrl.discount > 0) ...[
+            const SizedBox(height: 6),
+            _summaryRow(
+              'Discount',
+              '-\$${ctrl.discount.toStringAsFixed(2)}',
+              valueColor: _kOrange,
+            ),
+          ],
+          const SizedBox(height: 8),
+          const Divider(color: _kBorder, height: 1),
+          const SizedBox(height: 8),
+          _summaryRow(
+            'Grand Total',
+            '\$${ctrl.grandTotal.toStringAsFixed(2)}',
+            isBold: true,
+            valueColor: _kGreen,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryRow(String label, String value,
+      {bool isBold = false, Color? valueColor}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label,
+            style: TextStyle(
+              color: _kTextSecondary,
+              fontSize: isBold ? 15 : 13,
+              fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+            )),
+        Text(value,
+            style: TextStyle(
+              color: valueColor ?? _kTextPrimary,
+              fontSize: isBold ? 15 : 13,
+              fontWeight: isBold ? FontWeight.bold : FontWeight.w500,
+            )),
+      ],
+    );
+  }
+
+  // ── Payment Type Toggle ─────────────────────────────────────────────────────
+
+  Widget _buildPaymentTypeToggle() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Payment Method',
+            style: TextStyle(
+              color: _kTextPrimary,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            )),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _paymentOption(
+                label: 'Cash',
+                icon: Icons.payments_rounded,
+                isSelected: _paymentType == _PaymentType.cash,
+                onTap: () => setState(() => _paymentType = _PaymentType.cash),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _paymentOption(
+                label: 'Installment',
+                icon: Icons.calendar_month_rounded,
+                isSelected: _paymentType == _PaymentType.installment,
+                onTap: () =>
+                    setState(() => _paymentType = _PaymentType.installment),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
   Widget _paymentOption({
-    required String label, required IconData icon,
-    required bool selected, required Color selectedColor, VoidCallback? onTap,
+    required String label,
+    required IconData icon,
+    required bool isSelected,
+    required VoidCallback onTap,
   }) {
-    final disabled = onTap == null;
-    return InkWell(
+    return GestureDetector(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        height: 52,
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
-          color: disabled ? const Color(0xFF0F172A) : selected ? selectedColor.withOpacity(0.12) : const Color(0xFF1E293B),
-          borderRadius: BorderRadius.circular(12),
+          color: isSelected ? _kAccent.withAlpha(25) : _kCard,
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: disabled ? const Color(0xFF1E293B) : selected ? selectedColor.withOpacity(0.5) : const Color(0xFF334155),
-            width: selected ? 1.5 : 1,
+            color: isSelected ? _kAccent : _kBorder,
+            width: isSelected ? 2 : 1,
           ),
         ),
-        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(icon, color: disabled ? Colors.white12 : selected ? selectedColor : Colors.white38, size: 20),
-          const SizedBox(width: 8),
-          Text(label, style: TextStyle(
-            color: disabled ? Colors.white12 : selected ? selectedColor : Colors.white54,
-            fontSize: 14, fontWeight: FontWeight.w600)),
-        ]),
+        child: Column(
+          children: [
+            Icon(icon,
+                color: isSelected ? _kAccent : _kTextSecondary, size: 28),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? _kAccent : _kTextSecondary,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildInstallmentInputs() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF3B82F6).withOpacity(0.06),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF3B82F6).withOpacity(0.15)),
-      ),
-      child: Column(children: [
-        Row(children: [
-          const Expanded(child: Text('Number of Months', style: TextStyle(color: Colors.white70, fontSize: 13))),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1E293B),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF334155)),
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<int>(
-                value: _months,
-                dropdownColor: const Color(0xFF1E293B),
-                icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white38, size: 18),
-                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
-                items: _monthOptions.map((m) => DropdownMenuItem(value: m, child: Text('$m mo'))).toList(),
-                onChanged: (v) => setState(() => _monthsCtrl.text = '${v ?? 12}'),
-              ),
-            ),
-          ),
-        ]),
-        const SizedBox(height: 12),
-        Row(children: [
-          const Expanded(child: Text('Down Payment (\$)', style: TextStyle(color: Colors.white70, fontSize: 13))),
-          SizedBox(
-            width: 110, height: 40,
-            child: TextField(
-              controller: _downCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
-              onChanged: (_) => setState(() => _error = null),
-              decoration: InputDecoration(
-                filled: true, fillColor: const Color(0xFF1E293B),
-                prefixText: '\$ ', prefixStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
-                contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF334155))),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF334155))),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF3B82F6))),
-              ),
-            ),
-          ),
-        ]),
-        const SizedBox(height: 12),
-        Row(children: [
-          const Expanded(child: Text('Interest Rate (%)', style: TextStyle(color: Colors.white70, fontSize: 13))),
-          SizedBox(
-            width: 110, height: 40,
-            child: TextField(
-              controller: _interestCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
-              onChanged: (_) => setState(() => _error = null),
-              decoration: InputDecoration(
-                filled: true, fillColor: const Color(0xFF1E293B),
-                suffixText: '% ', suffixStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
-                contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF334155))),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF334155))),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF3B82F6))),
-              ),
-            ),
-          ),
-        ]),
-        const SizedBox(height: 14),
+  // ── Installment Section ─────────────────────────────────────────────────────
+
+  Widget _buildInstallmentSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Client Search / Selection
+        const Text('Select Client',
+            style: TextStyle(
+              color: _kTextPrimary,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            )),
+        const SizedBox(height: 8),
+
+        // Search field
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(8)),
-          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text('Monthly Payment', style: TextStyle(color: Colors.white54, fontSize: 13)),
-            Text('\$${_monthly.toStringAsFixed(2)} / mo',
-                style: const TextStyle(color: Color(0xFF60A5FA), fontSize: 15, fontWeight: FontWeight.w700)),
-          ]),
+          height: 42,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: _kCard,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: _kBorder),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.search_rounded,
+                  color: _kTextSecondary, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  style:
+                      const TextStyle(color: _kTextPrimary, fontSize: 13),
+                  decoration: const InputDecoration(
+                    hintText: 'Search by name or phone…',
+                    hintStyle:
+                        TextStyle(color: _kTextSecondary, fontSize: 13),
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  onChanged: (q) =>
+                      setState(() => _clientSearchQuery = q.trim()),
+                ),
+              ),
+              // New Client button
+              GestureDetector(
+                onTap: _showAddClientDialog,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _kGreen.withAlpha(25),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: _kGreen.withAlpha(80)),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.person_add_rounded,
+                          color: _kGreen, size: 14),
+                      SizedBox(width: 4),
+                      Text('New Client',
+                          style: TextStyle(
+                            color: _kGreen,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          )),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-      ]),
+        const SizedBox(height: 8),
+
+        // Client list
+        _buildClientList(),
+
+        const SizedBox(height: 16),
+
+        // Months selector
+        const Text('Number of Months',
+            style: TextStyle(
+              color: _kTextPrimary,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            )),
+        const SizedBox(height: 8),
+        _buildMonthsSelector(),
+
+        const SizedBox(height: 12),
+
+        // Monthly payment preview
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: _kAccent.withAlpha(15),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: _kAccent.withAlpha(50)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Monthly Payment',
+                  style: TextStyle(
+                    color: _kAccent,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  )),
+              Text(
+                '\$${_monthlyPayment.toStringAsFixed(2)} / month',
+                style: const TextStyle(
+                  color: _kAccent,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _buildDivider() => Container(
-    height: 1,
-    decoration: BoxDecoration(gradient: LinearGradient(colors: [
-      Colors.transparent, Colors.white.withOpacity(0.08), Colors.transparent,
-    ])),
-  );
+  Widget _buildClientList() {
+    if (_isLoadingClients) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(
+            child: CircularProgressIndicator(color: _kAccent, strokeWidth: 2)),
+      );
+    }
 
-  Widget _buildSummary() {
-    final tax = _subtotal * 0.10;
-    return Column(children: [
-      _row('Subtotal', '\$${_subtotal.toStringAsFixed(2)}'),
-      const SizedBox(height: 6),
-      _row('Tax (10%)', '\$${tax.toStringAsFixed(2)}'),
-      if (!_isCash && _down > 0) ...[
-        const SizedBox(height: 6),
-        _row('Down Payment', '-\$${_down.toStringAsFixed(2)}'),
-      ],
-      const SizedBox(height: 10),
-      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        const Text('Total', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
-        Text('\$${_total.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
-      ]),
-      if (!_isCash) ...[
-        const SizedBox(height: 6),
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Text('$_months × monthly', style: const TextStyle(color: Colors.white38, fontSize: 12)),
-          Text('\$${_monthly.toStringAsFixed(2)} / mo',
-              style: const TextStyle(color: Color(0xFF60A5FA), fontSize: 13, fontWeight: FontWeight.w600)),
-        ]),
-      ],
-    ]);
+    final clients = _filteredClients;
+    if (clients.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: _kCard,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Center(
+          child: Text('No clients found',
+              style: TextStyle(color: _kTextSecondary, fontSize: 12)),
+        ),
+      );
+    }
+
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 140),
+      decoration: BoxDecoration(
+        color: _kCard,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _kBorder),
+      ),
+      child: ListView.separated(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        itemCount: clients.length,
+        separatorBuilder: (context, index) =>
+            const Divider(color: _kBorder, height: 1),
+        itemBuilder: (context, i) {
+          final c = clients[i];
+          final isSelected = _selectedClient?.id == c.id;
+          return InkWell(
+            onTap: () => setState(() => _selectedClient = c),
+            child: Container(
+              color: isSelected ? _kAccent.withAlpha(20) : Colors.transparent,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                children: [
+                  // Avatar
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? _kAccent.withAlpha(40)
+                          : _kBorder.withAlpha(80),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        c.initial,
+                        style: TextStyle(
+                          color: isSelected ? _kAccent : _kTextSecondary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(c.name,
+                            style: TextStyle(
+                              color: isSelected ? _kAccent : _kTextPrimary,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            )),
+                        Text(c.phone,
+                            style: const TextStyle(
+                              color: _kTextSecondary,
+                              fontSize: 11,
+                            )),
+                      ],
+                    ),
+                  ),
+                  if (isSelected)
+                    const Icon(Icons.check_circle_rounded,
+                        color: _kAccent, size: 18),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
-  Widget _row(String label, String value) => Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-    Text(label, style: const TextStyle(color: Colors.white38, fontSize: 13)),
-    Text(value, style: const TextStyle(color: Colors.white54, fontSize: 13)),
-  ]);
-
-  Widget _buildActions() => Row(children: [
-    Expanded(child: SizedBox(height: 48, child: OutlinedButton(
-      onPressed: () => Navigator.of(context).pop(),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: Colors.white54,
-        side: const BorderSide(color: Color(0xFF334155)),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-      child: const Text('Cancel', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-    ))),
-    const SizedBox(width: 14),
-    Expanded(flex: 2, child: SizedBox(height: 48, child: ElevatedButton.icon(
-      onPressed: _confirm,
-      icon: const Icon(Icons.check_circle_outline_rounded, size: 20),
-      label: const Text('Confirm Sale', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFF22C55E), foregroundColor: Colors.white,
-        elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    ))),
-  ]);
-
-  Future<void> _confirm() async {
-    if (!_isCash) {
-      if (_selectedClient == null) { setState(() => _error = 'Select a client to create an installment plan.'); return; }
-      if (_down < 0 || _down >= _total) { setState(() => _error = 'Down payment must be between \$0 and \$${_total.toStringAsFixed(2)}.'); return; }
-      if (_months <= 0) { setState(() => _error = 'Months must be greater than 0.'); return; }
-    }
-
-    final cartItems = CartState.instance.itemsNotifier.value;
-    if (cartItems.isEmpty) { setState(() => _error = 'Cart is empty.'); return; }
-
-    final itemsJson = jsonEncode(cartItems.map((i) => {
-      'product_id': i.productId,
-      'quantity': i.quantity,
-      'unit_price': i.price,
-    }).toList());
-
-    try {
-      // Create Sale (Invoice)
-      // Using userId: 1 for now
-      final invoiceId = await AppDataStore.instance.createSale(
-        clientId: _selectedClient?.id,
-        userId: 1,
-        totalAmount: _total,
-        paymentMethod: _isCash ? 'cash' : 'installments',
-        itemsJson: itemsJson,
-      );
-
-      if (invoiceId <= 0) {
-        setState(() => _error = 'Failed to create sale in database.');
-        return;
-      }
-
-      if (!_isCash && _selectedClient != null) {
-        final success = await AppDataStore.instance.createInstallmentPlan(
-          clientId: _selectedClient!.id,
-          invoiceId: invoiceId,
-          totalAmount: _total,
-          downPayment: _down,
-          months: _months,
-          interestRate: _rate,
+  Widget _buildMonthsSelector() {
+    return Row(
+      children: InstallmentsFFI.availableMonths.map((m) {
+        final isSelected = _selectedMonths == m;
+        return Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 3),
+            child: GestureDetector(
+              onTap: () => setState(() => _selectedMonths = m),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: isSelected ? _kAccent.withAlpha(25) : _kCard,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isSelected ? _kAccent : _kBorder,
+                    width: isSelected ? 2 : 1,
+                  ),
+                ),
+                child: Center(
+                  child: Text(
+                    '$m mo',
+                    style: TextStyle(
+                      color: isSelected ? _kAccent : _kTextSecondary,
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         );
-        if (!success) {
-           setState(() => _error = 'Sale created (ID: $invoiceId), but failed to create installment plan.');
-           return;
-        }
-      }
+      }).toList(),
+    );
+  }
 
-      Navigator.of(context).pop();
-      CartState.instance.clearCart();
+  // ── Footer Buttons ──────────────────────────────────────────────────────────
 
-      final msg = _isCash
-          ? 'Sale confirmed — Cash ✓'
-          : 'Installment plan created for ${_selectedClient!.name} ✓';
+  Widget _buildFooter() {
+    final canComplete = !_isProcessing &&
+        (_paymentType == _PaymentType.cash ||
+            (_paymentType == _PaymentType.installment &&
+                _selectedClient != null));
 
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(msg, style: const TextStyle(color: Colors.white)),
-        backgroundColor: const Color(0xFF22C55E),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        margin: const EdgeInsets.all(16),
-      ));
-    } catch (e) {
-      setState(() => _error = 'Error during checkout: $e');
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          // Cancel
+          Expanded(
+            child: OutlinedButton(
+              onPressed: _isProcessing ? null : () => Navigator.pop(context, false),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _kTextSecondary,
+                side: const BorderSide(color: _kBorder),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              child: const Text('Cancel', style: TextStyle(fontSize: 14)),
+            ),
+          ),
+          const SizedBox(width: 12),
+
+          // Confirm
+          Expanded(
+            flex: 2,
+            child: ElevatedButton(
+              onPressed: canComplete ? _handleCheckout : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _kGreen,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: _kCard,
+                disabledForegroundColor: _kTextSecondary,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              child: _isProcessing
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.check_circle_rounded, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          _paymentType == _PaymentType.cash
+                              ? 'Confirm Purchase (Cash)'
+                              : 'Confirm Installment',
+                          style: const TextStyle(
+                              fontSize: 14, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Actions ─────────────────────────────────────────────────────────────────
+
+  Future<void> _handleCheckout() async {
+    setState(() => _isProcessing = true);
+
+    CheckoutResult result;
+
+    if (_paymentType == _PaymentType.cash) {
+      result = await PosCheckoutService.processCashSale();
+    } else {
+      result = await PosCheckoutService.processInstallmentSale(
+        client: _selectedClient!,
+        months: _selectedMonths,
+      );
     }
+
+    if (!mounted) return;
+
+    setState(() => _isProcessing = false);
+
+    if (!result.success) {
+      // Show error SnackBar and stay on checkout dialog
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message),
+          backgroundColor: _kRed,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
+    // Close the checkout dialog first
+    Navigator.pop(context, true);
+
+    // Show the invoice preview with the sale snapshot
+    if (context.mounted) {
+      await showInvoicePreviewDialog(context, result);
+    }
+  }
+
+  void _showAddClientDialog() {
+    final nameCtrl = TextEditingController();
+    final phoneCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: _kSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.person_add_rounded, color: _kGreen, size: 20),
+                  SizedBox(width: 8),
+                  Text('Add New Client',
+                      style: TextStyle(
+                        color: _kTextPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      )),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _inputField(controller: nameCtrl, hint: 'Client Name'),
+              const SizedBox(height: 10),
+              _inputField(
+                controller: phoneCtrl,
+                hint: 'Phone Number',
+                keyboardType: TextInputType.phone,
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _kTextSecondary,
+                        side: const BorderSide(color: _kBorder),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        final name = nameCtrl.text.trim();
+                        final phone = phoneCtrl.text.trim();
+                        if (name.isEmpty || phone.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Please enter name and phone'),
+                              backgroundColor: _kRed,
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                          return;
+                        }
+
+                        // Add client via FFI
+                        final userId = SessionNativeAPI.instance
+                            .getCurrentUserId();
+                        ClientsFFI.instance.addClient(
+                          userId: userId,
+                          name: name,
+                          phone: phone,
+                        );
+
+                        Navigator.pop(ctx);
+                        // Reload clients
+                        _loadClients();
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _kGreen,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: const Text('Add'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _inputField({
+    required TextEditingController controller,
+    required String hint,
+    TextInputType keyboardType = TextInputType.text,
+  }) {
+    return Container(
+      height: 42,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: _kCard,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _kBorder),
+      ),
+      child: TextField(
+        controller: controller,
+        keyboardType: keyboardType,
+        style: const TextStyle(color: _kTextPrimary, fontSize: 13),
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: const TextStyle(color: _kTextSecondary, fontSize: 13),
+          border: InputBorder.none,
+          isDense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+      ),
+    );
   }
 }

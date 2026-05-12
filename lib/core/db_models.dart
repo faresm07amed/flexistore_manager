@@ -14,6 +14,14 @@ class DbClient {
     required this.totalDebt,
   });
 
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DbClient && runtimeType == other.runtimeType && id == other.id;
+
+  @override
+  int get hashCode => id.hashCode;
+
   factory DbClient.fromJson(Map<String, dynamic> j) => DbClient(
         id:        j['id'] as int,
         name:      j['name'] as String,
@@ -57,6 +65,7 @@ class DbInstallmentPlan {
   final String clientName;
   final String clientPhone;
   final int invoiceId;
+  final String? itemName;
   final double totalAmount;
   final double remainingAmount;
   final int months;
@@ -64,6 +73,7 @@ class DbInstallmentPlan {
   final String status; // 'active' | 'completed' | 'cancelled'
   final double interestRate;
   final String createdAt;
+  final String? lastPaymentDate;
 
   const DbInstallmentPlan({
     required this.id,
@@ -71,6 +81,7 @@ class DbInstallmentPlan {
     required this.clientName,
     required this.clientPhone,
     required this.invoiceId,
+    this.itemName,
     required this.totalAmount,
     required this.remainingAmount,
     required this.months,
@@ -78,6 +89,7 @@ class DbInstallmentPlan {
     required this.status,
     this.interestRate = 0.0,
     required this.createdAt,
+    this.lastPaymentDate,
   });
 
   double get paidAmount => totalAmount - remainingAmount;
@@ -91,6 +103,7 @@ class DbInstallmentPlan {
         clientName:          j['client_name'] as String,
         clientPhone:         j['client_phone'] as String,
         invoiceId:           j['invoice_id'] as int,
+        itemName:            j['item_name'] as String?,
         totalAmount:         (j['total_amount'] as num).toDouble(),
         remainingAmount:     (j['remaining_amount'] as num).toDouble(),
         months:              j['months'] as int,
@@ -98,6 +111,7 @@ class DbInstallmentPlan {
         status:              j['status'] as String,
         interestRate:        (j['interest_rate'] as num?)?.toDouble() ?? 0.0,
         createdAt:           j['created_at'] as String,
+        lastPaymentDate:     j['last_payment_date'] as String?,
       );
 }
 

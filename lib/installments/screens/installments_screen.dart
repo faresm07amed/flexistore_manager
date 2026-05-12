@@ -194,7 +194,7 @@ class _InstallmentsScreenState extends State<InstallmentsScreen> {
             : 0.0;
         return PaymentPlanCard(
           clientName: plan.clientName,
-          itemName: 'Invoice #${plan.invoiceId}',
+          itemName: plan.itemName ?? 'Invoice #${plan.invoiceId}',
           status: plan.status,
           progress: progress.clamp(0.0, 1.0),
           totalAmount: plan.totalAmount,
@@ -218,54 +218,65 @@ class _InstallmentsScreenState extends State<InstallmentsScreen> {
   void _showPaymentHistory(BuildContext context, DbInstallmentPlan plan) {
     showDialog(
       context: context,
-      builder: (_) => Dialog(
-        backgroundColor: const Color(0xFF1E293B),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: SizedBox(
-            width: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      '${plan.clientName} — Plan Summary',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text('Invoice #${plan.invoiceId}',
+      builder: (BuildContext ctx) => _PaymentHistoryDialog(plan: plan),
+    );
+  }
+}
+
+class _PaymentHistoryDialog extends StatelessWidget {
+  final DbInstallmentPlan plan;
+
+  const _PaymentHistoryDialog({Key? key, required this.plan}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: const Color(0xFF1E293B),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '${plan.clientName} — Plan Summary',
                     style: const TextStyle(
-                        color: Color(0xFF94A3B8), fontSize: 13)),
-                const SizedBox(height: 20),
-                const Divider(color: Color(0xFF334155)),
-                const SizedBox(height: 16),
-                _summaryRow('Total Amount',    '\$${plan.totalAmount.toStringAsFixed(2)}'),
-                const SizedBox(height: 10),
-                _summaryRow('Paid',            '\$${plan.paidAmount.toStringAsFixed(2)}'),
-                const SizedBox(height: 10),
-                _summaryRow('Remaining',       '\$${plan.remainingAmount.toStringAsFixed(2)}'),
-                const SizedBox(height: 10),
-                _summaryRow('Monthly',         '\$${plan.monthlyInstallment.toStringAsFixed(2)}'),
-                const SizedBox(height: 10),
-                _summaryRow('Status',          plan.status),
-                const SizedBox(height: 10),
-                _summaryRow('Created',         plan.createdAt),
-                const SizedBox(height: 20),
-              ],
-            ),
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
+                    onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(plan.itemName ?? 'Invoice #${plan.invoiceId}',
+                  style: const TextStyle(
+                      color: Color(0xFF94A3B8), fontSize: 13)),
+              const SizedBox(height: 20),
+              const Divider(color: Color(0xFF334155)),
+              const SizedBox(height: 16),
+              _summaryRow('Total Amount',    '\$${plan.totalAmount.toStringAsFixed(2)}'),
+              const SizedBox(height: 10),
+              _summaryRow('Paid',            '\$${plan.paidAmount.toStringAsFixed(2)}'),
+              const SizedBox(height: 10),
+              _summaryRow('Remaining',       '\$${plan.remainingAmount.toStringAsFixed(2)}'),
+              const SizedBox(height: 10),
+              _summaryRow('Monthly',         '\$${plan.monthlyInstallment.toStringAsFixed(2)}'),
+              const SizedBox(height: 10),
+              _summaryRow('Status',          plan.status),
+              const SizedBox(height: 10),
+              _summaryRow('Created',         plan.createdAt),
+              const SizedBox(height: 20),
+            ],
           ),
         ),
       ),

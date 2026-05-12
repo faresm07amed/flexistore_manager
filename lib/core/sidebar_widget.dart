@@ -9,7 +9,7 @@ class SidebarWidget extends StatefulWidget {
 }
 
 class _SidebarWidgetState extends State<SidebarWidget> {
-  bool isExpanded = true;
+  bool isExpanded = false;
 
   final List<Map<String, dynamic>> menuItems = [
     {'icon': Icons.dashboard_outlined, 'label': 'Dashboard', 'route': '/dashboard'},
@@ -17,9 +17,17 @@ class _SidebarWidgetState extends State<SidebarWidget> {
     {'icon': Icons.people_outline, 'label': 'Clients', 'route': '/clients'},
     {'icon': Icons.calendar_today_outlined, 'label': 'Installments', 'route': '/installments'},
     {'icon': Icons.inventory_2_outlined, 'label': 'Inventory', 'route': '/inventory'},
-    {'icon': Icons.history_outlined, 'label': 'Transactions', 'route': '/transactions'},
+    {
+      'icon': Icons.bar_chart_outlined,
+      'label': 'Transactions History',
+      'route': '/transactions_history',
+    },
+    {
+      'icon': Icons.history_outlined,
+      'label': 'Inventory History',
+      'route': '/inventory_history',
+    },
     {'icon': Icons.keyboard_return_outlined, 'label': 'Returns', 'route': '/returns'},
-    {'icon': Icons.bar_chart_outlined, 'label': 'Audit', 'route': '/audit'},
   ];
 
   @override
@@ -41,53 +49,61 @@ class _SidebarWidgetState extends State<SidebarWidget> {
               // App Logo Header
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                child: Row(
-                  mainAxisAlignment: isExpanded
-                      ? MainAxisAlignment.start
-                      : MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF3B82F6), // Blue accent
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: GestureDetector(
-                        child: const Icon(Icons.shopping_cart, color: Colors.white, size: 24),
-                        onTap: () {
-                          setState(() {
-                            isExpanded = !isExpanded;
-                          });
-                        },
-                      ),
-                    ),
-                    if (isExpanded) ...[
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'FlexiStore',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.clip,
-                            ),
-                            Text(
-                              'Manager v1.0',
-                              style: TextStyle(color: Colors.white54, fontSize: 11),
-                              maxLines: 1,
-                              overflow: TextOverflow.clip,
-                            ),
-                          ],
+                child: Container(
+                  alignment: Alignment.center,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    physics: const NeverScrollableScrollPhysics(),
+                    child: Row(
+                      mainAxisAlignment: isExpanded
+                          ? MainAxisAlignment.start
+                          : MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF3B82F6), // Blue accent
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: GestureDetector(
+                            child: const Icon(Icons.shopping_cart, color: Colors.white, size: 24),
+                            onTap: () {
+                              setState(() {
+                                isExpanded = !isExpanded;
+                              });
+                            },
+                          ),
                         ),
-                      ),
-                    ],
-                  ],
+                        if (isExpanded) ...[
+                          const SizedBox(width: 12),
+                          const SizedBox(
+                            width: 150, // Fixed width prevents overflow instead of Expanded
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'FlexiStore',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.clip,
+                                ),
+                                Text(
+                                  'Manager v1.0',
+                                  style: TextStyle(color: Colors.white54, fontSize: 11),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.clip,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 ),
               ),
 
@@ -159,43 +175,51 @@ class _SidebarWidgetState extends State<SidebarWidget> {
           color: isSelected ? const Color(0xFF1E293B) : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
         ),
-        child: Row(
-          mainAxisAlignment: isExpanded ? MainAxisAlignment.start : MainAxisAlignment.center,
-          children: [
-            Icon(
-              item['icon'] as IconData,
-              color: isSelected
-                  ? const Color(0xFF3B82F6)
-                  : (isLogout ? Colors.redAccent : Colors.white70),
-              size: 22,
+        child: Container(
+          alignment: Alignment.center,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            physics: const NeverScrollableScrollPhysics(),
+            child: Row(
+              mainAxisAlignment: isExpanded ? MainAxisAlignment.start : MainAxisAlignment.center,
+              children: [
+                Icon(
+                  item['icon'] as IconData,
+                  color: isSelected
+                      ? const Color(0xFF3B82F6)
+                      : (isLogout ? Colors.redAccent : Colors.white70),
+                  size: 22,
+                ),
+                if (isExpanded) ...[
+                  const SizedBox(width: 16),
+                  SizedBox(
+                    width: 140, // Fixed width prevents layout constraint overflow
+                    child: Text(
+                      item['label'] as String,
+                      style: TextStyle(
+                        color: isSelected
+                            ? Colors.white
+                            : (isLogout ? Colors.redAccent : Colors.white70),
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                        fontSize: 14,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.clip,
+                    ),
+                  ),
+                  if (isSelected)
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF3B82F6),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                ],
+              ],
             ),
-            if (isExpanded) ...[
-              const SizedBox(width: 16),
-              Expanded(
-                child: Text(
-                  item['label'] as String,
-                  style: TextStyle(
-                    color: isSelected
-                        ? Colors.white
-                        : (isLogout ? Colors.redAccent : Colors.white70),
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                    fontSize: 14,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.clip,
-                ),
-              ),
-              if (isSelected)
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF3B82F6),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-            ],
-          ],
+          ),
         ),
       ),
     );

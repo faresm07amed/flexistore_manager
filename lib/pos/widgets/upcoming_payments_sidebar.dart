@@ -11,7 +11,19 @@ class UpcomingPaymentsSidebar extends StatelessWidget {
     return ValueListenableBuilder<List<DbInstallmentPlan>>(
       valueListenable: AppDataStore.instance.installmentsNotifier,
       builder: (context, plans, _) {
-        final upcoming = plans.where((p) => p.status != 'completed').toList()
+        final now = DateTime.now();
+        final upcoming = plans.where((p) {
+          if (p.status == 'completed') return false;
+          if (p.lastPaymentDate != null) {
+            try {
+              final last = DateTime.parse(p.lastPaymentDate!);
+              if (last.year == now.year && last.month == now.month) {
+                return false; // Paid this month
+              }
+            } catch (_) {}
+          }
+          return true;
+        }).toList()
           ..sort((a, b) {
             if (a.isOverdue && !b.isOverdue) return -1;
             if (b.isOverdue && !a.isOverdue) return 1;

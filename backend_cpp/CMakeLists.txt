@@ -21,7 +21,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 # ── Locate MySQL Connector/C++ ────────────────────────────────────────────────
 # Note: MySQL package name changed from "MySQL" to "MySQLConnector" in newer FindMySQL.cmake
 # Try both package names to be robust
-find_package(MySQL REQUIRED)
+find_package(MySQL QUIET)
 if(NOT MySQL_FOUND)
     find_package(MySQLConnector REQUIRED)
 endif()
@@ -57,7 +57,7 @@ target_compile_definitions(flexistore PRIVATE FLEXISTORE_EXPORTS)
 target_include_directories(flexistore
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src          # allows includes like "core/db_config.h"
-        ${CMAKE_CURRENT_SOURCE_DIR}/include      # Mock boost headers
+        ${CMAKE_CURRENT_SOURCE_DIR}/include      # Boost shim headers
         ${MYSQL_INCLUDE_DIRS}            # MySQL Connector headers
         ${MYSQL_INCLUDE_DIRS}/jdbc       # For MySQL Connector 9.x JDBC compatibility
 )
@@ -70,6 +70,13 @@ if(WIN32)
     target_compile_definitions(flexistore PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _ITERATOR_DEBUG_LEVEL=0)
     # Enforce Release CRT (/MD) to avoid bad_alloc and ABI mismatches with MySQL Connector
     set_property(TARGET flexistore PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+
+    # CRITICAL: Flutter injects /MDd into global CMake flags for debug builds.
+    # We MUST scrub /MDd and replace it with /MD so MSVC doesn't pick /MDd over the property.
+    string(REPLACE "/MDd" "/MD" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+    string(REPLACE "/MDd" "/MD" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+    string(REPLACE "/MDd" "/MD" CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+    string(REPLACE "/MDd" "/MD" CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELWITHDEBINFO}")
 endif()
 
 # ── Output the DLL directly into a predictable location ───────────────────────

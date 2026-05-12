@@ -52,6 +52,9 @@ static const char* SQL_CREATE_CLIENTS =
     "  id             INT AUTO_INCREMENT PRIMARY KEY,"
     "  name           VARCHAR(100)  NOT NULL,"
     "  phone          VARCHAR(20)   NOT NULL UNIQUE,"
+    "  email          VARCHAR(100)  DEFAULT NULL,"
+    "  address        VARCHAR(255)  DEFAULT NULL,"
+    "  notes          TEXT          DEFAULT NULL,"
     "  total_debt     DECIMAL(12,2) NOT NULL DEFAULT 0.00,"
     "  created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
     "  updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
@@ -63,6 +66,7 @@ static const char* SQL_CREATE_PRODUCTS =
     "  id              INT AUTO_INCREMENT PRIMARY KEY,"
     "  barcode         VARCHAR(50)   NOT NULL UNIQUE,"
     "  name            VARCHAR(150)  NOT NULL,"
+    "  category        VARCHAR(100)  NOT NULL DEFAULT 'General',"
     "  purchase_price  DECIMAL(10,2) NOT NULL DEFAULT 0.00,"
     "  selling_price   DECIMAL(10,2) NOT NULL DEFAULT 0.00,"
     "  stock_quantity  INT           NOT NULL DEFAULT 0,"
@@ -218,7 +222,30 @@ FLEXISTORE_EXPORT int initialize_database() {
             cout << "[db_initializer] Table '" << TABLE_NAMES[i] << "' ensured." << endl;
         }
 
-        // ── Step 4: Seed a default admin user if users table is empty ────
+        // ── Step 3.1: Run schema migrations (e.g., missing category column) ──
+        try {
+            unique_ptr<sql::Statement> alter_stmt(guard.c->createStatement());
+            alter_stmt->execute("ALTER TABLE products ADD COLUMN category VARCHAR(100) NOT NULL DEFAULT 'General' AFTER name");
+            cout << "[db_initializer] Migration: Added 'category' column to products table." << endl;
+        } catch (sql::SQLException& e) {
+            // 1060 = Duplicate column name (already exists)
+            if (e.getErrorCode() != 1060) {
+                cout << "[db_initializer] Warning on ALTER TABLE products: " << e.what() << endl;
+            }
+        }
+
+        // ── Step 3.2: Run schema migration for return tracking ───────────
+        try {
+            unique_ptr<sql::Statement> alter_stmt(guard.c->createStatement());
+            alter_stmt->execute("ALTER TABLE invoices ADD COLUMN return_of_invoice_id INT DEFAULT NULL AFTER payment_type");
+            cout << "[db_initializer] Migration: Added 'return_of_invoice_id' column to invoices table." << endl;
+        } catch (sql::SQLException& e) {
+            if (e.getErrorCode() != 1060) {
+                cout << "[db_initializer] Warning on ALTER TABLE invoices: " << e.what() << endl;
+            }
+        }
+
+        // ── Step 4: Seed default users if users table is empty ────
         {
             unique_ptr<sql::Statement> stmt(guard.c->createStatement());
             unique_ptr<sql::ResultSet> rs(stmt->executeQuery(
@@ -226,18 +253,34 @@ FLEXISTORE_EXPORT int initialize_database() {
             ));
 
             if (rs->next() && rs->getInt("cnt") == 0) {
-                unique_ptr<sql::PreparedStatement> pstmt(guard.c->prepareStatement(
-                    "INSERT INTO users (name, username, password_hash, role) "
-                    "VALUES (?, ?, ?, ?)"
-                ));
-                pstmt->setString(1, "Administrator");
-                pstmt->setString(2, "admin");
-                pstmt->setString(3, "admin123");
-                pstmt->setString(4, "admin");
-                pstmt->executeUpdate();
-                cout << "[db_initializer] Default admin user created (admin / admin123)." << endl;
+                unique_ptr<sql::Statement> insert_stmt(guard.c->createStatement());
+                insert_stmt->execute(
+                    "INSERT INTO users (name, username, password_hash, role) VALUES "
+                    "('System Admin', 'admin', 'admin123', 'admin'), "
+                    "('Cashier One', 'cashier', '123456', 'cashier'), "
+                    "('Inventory Manager', 'store_mng', 'store123', 'manager')"
+                );
+                cout << "[db_initializer] Default users seeded from SQL schema." << endl;
             }
         }
+
+        // ── Step 5: Seed default products so Team 7 Audit tests pass FK constraint ────
+        {
+            unique_ptr<sql::Statement> stmt(guard.c->createStatement());
+            unique_ptr<sql::ResultSet> rs(stmt->executeQuery(
+                "SELECT COUNT(*) AS cnt FROM products"
+            ));
+
+            if (rs->next() && rs->getInt("cnt") == 0) {
+                unique_ptr<sql::Statement> insert_stmt(guard.c->createStatement());
+                insert_stmt->execute(
+                    "INSERT INTO products (id, barcode, name, category, purchase_price, selling_price, stock_quantity, status) VALUES "
+                    "(1, '1234567890123', 'Dummy Product', 'General', 10.00, 15.00, 100, 'active')"
+                );
+                cout << "[db_initializer] Dummy product seeded for FFI testing." << endl;
+            }
+        }
+
         cout << "[db_initializer] ✔ Database initialization complete." << endl;
         return FFI_SUCCESS;
     }

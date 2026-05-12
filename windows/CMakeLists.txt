@@ -91,9 +91,9 @@ endif()
 
 # Install our C++ backend and MySQL dependencies for release builds
 install(FILES "$<TARGET_FILE:flexistore>"
-        "C:/Program Files/MySQL/MySQL Connector C++ 9.7/lib64/mysqlcppconn-10-vs14.dll"
-        "C:/Program Files/MySQL/MySQL Connector C++ 9.7/lib64/libcrypto-3-x64.dll"
-        "C:/Program Files/MySQL/MySQL Connector C++ 9.7/lib64/libssl-3-x64.dll"
+        "C:/Program Files/MySQL/MySQL Connector C++ 8.0/lib64/mysqlcppconn-7-vs14.dll"
+        "C:/Program Files/MySQL/MySQL Connector C++ 8.0/lib64/libeay32.dll"
+        "C:/Program Files/MySQL/MySQL Connector C++ 8.0/lib64/ssleay32.dll"
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 
